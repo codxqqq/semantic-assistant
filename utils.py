@@ -100,24 +100,27 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]
 
-# Точный поиск
+# Точный поиск с учетом всех слов и синонимов
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
     query_stems = [stemmer.stem(word) for word in query_words]
 
-    # Получаем объединённое множество синонимов всех слов
-    synonyms = set()
-    for stem in query_stems:
-        synonyms.update(SYNONYM_DICT.get(stem, {stem}))
-
     matched = []
     for _, row in df.iterrows():
-        words = re.findall(r"\w+", row['phrase_proc'])
-        stems = [stemmer.stem(word) for word in words]
+        phrase_words = re.findall(r"\w+", row['phrase_proc'])
+        phrase_stems = {stemmer.stem(word) for word in phrase_words}
 
-        if any(stem in synonyms for stem in stems):
+        # Все слова запроса (или их синонимы) должны присутствовать в фразе
+        if all(
+            any(
+                qs in SYNONYM_DICT.get(ps, {ps})
+                for ps in phrase_stems
+            )
+            for qs in query_stems
+        ):
             matched.append((row['phrase'], row['topics']))
 
     return matched
+
 
