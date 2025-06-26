@@ -80,7 +80,7 @@ def load_all_excels():
     return pd.concat(dfs, ignore_index=True)
 
 # Семантический поиск с учётом синонимов
-def semantic_search(query, df, top_k=5, threshold=0.45):
+def semantic_search(query, df, top_k=5, threshold=0.4):
     expanded_query = expand_with_synonyms(preprocess(query))
     query_emb = model.encode(expanded_query, convert_to_tensor=True)
     phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
