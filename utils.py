@@ -1,4 +1,3 @@
-# utils.py
 import pandas as pd
 import requests
 import re
@@ -63,6 +62,7 @@ def load_excel(url):
             rows.append({
                 'phrase': sub_phrase,
                 'phrase_proc': preprocess(sub_phrase),
+                'phrase_full': phrase,  # новая колонка для отображения
                 'topics': topics
             })
 
@@ -93,9 +93,9 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     for idx, score in enumerate(sims):
         score = float(score)
         if score >= threshold:
-            phrase = df.iloc[idx]['phrase']
+            phrase_full = df.iloc[idx]['phrase_full']
             topics = df.iloc[idx]['topics']
-            results.append((score, phrase, topics))
+            results.append((score, phrase_full, topics))
 
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]
