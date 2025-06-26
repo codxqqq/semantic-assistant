@@ -105,13 +105,16 @@ def keyword_search(query, df):
     query_proc = preprocess(query)
     query_stem = stemmer.stem(query_proc)
 
+    # Получаем группу синонимов по стему запроса
+    synonyms = SYNONYM_DICT.get(query_stem, {query_stem})
+
     matched = []
     for _, row in df.iterrows():
         words = re.findall(r"\w+", row['phrase_proc'])
         stems = [stemmer.stem(word) for word in words]
 
-        # Проверка по длине слова или точному совпадению
-        if query_proc in words or (len(query_proc) <= 5 and query_stem in stems):
+        # Совпадение по любому синониму
+        if any(stem in synonyms for stem in stems):
             matched.append((row['phrase'], row['topics']))
 
     return matched
