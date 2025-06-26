@@ -1,3 +1,4 @@
+# utils.py
 import pandas as pd
 import requests
 import re
@@ -5,53 +6,45 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer, util
 from nltk.stem.snowball import SnowballStemmer
 
-# Загружаем модель
+# Модель для семантического поиска
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+
+# Стеммер для русского языка
 stemmer = SnowballStemmer("russian")
 
-# Синонимы (взаимные)
-SYNONYMS = {
-    "сим": ["симка", "симкарта", "сим-карта", "сим карта"],
-    "кредитка": ["кредитная карта"],
-    "наличные": ["наличка"],
-    "погашение": ["погасить"],
-    "полное": ["полностью"],
-    "зп": ["зарплатная", "зарплатный"],
-    "онлайн банк": ["личный кабинет", "аккаунт", "приложение"]
-}
+# Глобальный словарь синонимов
+SYNONYM_GROUPS = [
+    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
+    ["кредитка", "кредитная карта", "кредитной картой", "картой"],
+    ["наличные", "наличка", "наличными"]
+]
 
-# Обратная карта синонимов
-REVERSE_SYNONYMS = {}
-for key, values in SYNONYMS.items():
-    for val in values:
-        REVERSE_SYNONYMS[val] = key
-    REVERSE_SYNONYMS[key] = key
+# Построение взаимного словаря синонимов (быстрый доступ)
+SYNONYM_DICT = {}
+for group in SYNONYM_GROUPS:
+    for word in group:
+        stem = stemmer.stem(word.lower())
+        SYNONYM_DICT[stem] = {stemmer.stem(w) for w in group}
 
-# Предобработка текста
-def preprocess(text):
-    text = str(text).lower().strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-# Расширение запроса синонимами
-def expand_with_synonyms(query):
-    words = re.findall(r'\b\w+\b', query.lower())
-    expanded = words[:]
-    for word in words:
-        stem = stemmer.stem(word)
-        for key, synonyms in SYNONYMS.items():
-            all_forms = synonyms + [key]
-            if stem in [stemmer.stem(s) for s in all_forms]:
-                expanded.extend(all_forms)
-    return ' '.join(set(expanded))
-
-# Загрузка Excel-файлов
+# Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
+# Нормализация строки
+def preprocess(text):
+    text = str(text).lower().strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+# Расширение строки на подфразы по /
+def split_by_slash(phrase):
+    parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
+    return parts if len(parts) > 1 else [phrase]
+
+# Загрузка одного Excel-файла с разделением по /
 def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -62,11 +55,20 @@ def load_excel(url):
     if not topic_cols:
         raise KeyError("Не найдены колонки topics")
 
-    df = df[['phrase'] + topic_cols]
-    df['topics'] = df[topic_cols].fillna('').agg(lambda x: [t for t in x.tolist() if t], axis=1)
-    df['phrase_proc'] = df['phrase'].apply(preprocess)
-    return df[['phrase', 'phrase_proc', 'topics']]
+    rows = []
+    for _, row in df.iterrows():
+        phrase = row['phrase']
+        topics = [t for t in row[topic_cols].fillna('').tolist() if t]
+        for sub_phrase in split_by_slash(phrase):
+            rows.append({
+                'phrase': sub_phrase,
+                'phrase_proc': preprocess(sub_phrase),
+                'topics': topics
+            })
 
+    return pd.DataFrame(rows)
+
+# Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
     for url in GITHUB_CSV_URLS:
@@ -79,10 +81,10 @@ def load_all_excels():
         raise ValueError("Не удалось загрузить ни одного файла")
     return pd.concat(dfs, ignore_index=True)
 
-# Семантический поиск с учётом синонимов
-def semantic_search(query, df, top_k=5, threshold=0.4):
-    expanded_query = expand_with_synonyms(preprocess(query))
-    query_emb = model.encode(expanded_query, convert_to_tensor=True)
+# Семантический поиск
+def semantic_search(query, df, top_k=5, threshold=0.5):
+    query_proc = preprocess(query)
+    query_emb = model.encode(query_proc, convert_to_tensor=True)
     phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
@@ -98,24 +100,18 @@ def semantic_search(query, df, top_k=5, threshold=0.4):
     results.sort(key=lambda x: x[0], reverse=True)
     return results[:top_k]
 
-# Точный поиск по ключевым словам
+# Точный поиск
 def keyword_search(query, df):
-    query = preprocess(query)
-    query_stem = stemmer.stem(query)
+    query_proc = preprocess(query)
+    query_stem = stemmer.stem(query_proc)
 
-    search_terms = set([query_stem])
-    for key, synonyms in SYNONYMS.items():
-        stems = {stemmer.stem(s) for s in synonyms + [key]}
-        if query_stem in stems:
-            search_terms.update(stems)
-
-    matches = []
+    matched = []
     for _, row in df.iterrows():
-        parts = re.split(r"[\/|,]", row['phrase_proc'])
-        for part in parts:
-            words = re.findall(r'\b\w+\b', part)
-            for word in words:
-                if stemmer.stem(word) in search_terms:
-                    matches.append((row['phrase'], row['topics']))
-                    break
-    return matches
+        words = re.findall(r"\w+", row['phrase_proc'])
+        stems = [stemmer.stem(word) for word in words]
+
+        # Проверка по длине слова или точному совпадению
+        if query_proc in words or (len(query_proc) <= 5 and query_stem in stems):
+            matched.append((row['phrase'], row['topics']))
+
+    return matched
