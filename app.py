@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 from utils import load_all_excels, semantic_search, keyword_search
 
@@ -14,8 +13,8 @@ if query:
 
         if results:
             st.markdown("### 🔍 Результаты умного поиска:")
-            for score, phrase, topics in results:
-                st.markdown(f"- **{phrase}** → {', '.join(topics)} (_{score:.2f}_)")
+            for score, phrase_full, topics in results:
+                st.markdown(f"- **{phrase_full}** → {', '.join(topics)} (_{score:.2f}_)")
         else:
             st.warning("Совпадений не найдено в умном поиске.")
 
