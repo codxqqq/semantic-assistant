@@ -47,6 +47,13 @@ def split_by_slash(phrase):
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
     return parts if len(parts) > 1 else [phrase]
 
+# Разбиение длинного запроса на подзапросы
+def split_into_subqueries(text):
+    text = preprocess(text)
+    parts = re.split(r"\b(?:и|а|но|если|когда|после того как|потому что|,|\.|\n)\b", text)
+    subqueries = [p.strip() for p in parts if len(p.strip()) >= 5]
+    return subqueries if len(subqueries) > 1 else [text]
+
 # Загрузка одного Excel-файла с разделением по /
 def load_excel(url):
     response = requests.get(url)
@@ -66,7 +73,7 @@ def load_excel(url):
             rows.append({
                 'phrase': sub_phrase,
                 'phrase_proc': preprocess(sub_phrase),
-                'phrase_full': phrase,  # новая колонка для отображения
+                'phrase_full': phrase,
                 'topics': topics
             })
 
@@ -85,24 +92,36 @@ def load_all_excels():
         raise ValueError("Не удалось загрузить ни одного файла")
     return pd.concat(dfs, ignore_index=True)
 
-# Семантический поиск
+# Семантический поиск с подзапросами
 def semantic_search(query, df, top_k=5, threshold=0.5):
-    query_proc = preprocess(query)
-    query_emb = model.encode(query_proc, convert_to_tensor=True)
+    subqueries = split_into_subqueries(query)
     phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
-    sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
-    results = []
+    all_results = []
 
-    for idx, score in enumerate(sims):
-        score = float(score)
-        if score >= threshold:
-            phrase_full = df.iloc[idx]['phrase_full']
-            topics = df.iloc[idx]['topics']
-            results.append((score, phrase_full, topics))
+    for subq in subqueries:
+        subq_emb = model.encode(subq, convert_to_tensor=True)
+        sims = util.pytorch_cos_sim(subq_emb, phrase_embs)[0]
 
-    results.sort(key=lambda x: x[0], reverse=True)
-    return results[:top_k]
+        for idx, score in enumerate(sims):
+            score = float(score)
+            if score >= threshold:
+                phrase_full = df.iloc[idx]['phrase_full']
+                topics = df.iloc[idx]['topics']
+                all_results.append((score, phrase_full, topics))
+
+    # Удалим дубликаты и оставим top_k лучших
+    seen = set()
+    unique_results = []
+    for r in sorted(all_results, key=lambda x: x[0], reverse=True):
+        key = (r[1], tuple(r[2]))
+        if key not in seen:
+            unique_results.append(r)
+            seen.add(key)
+        if len(unique_results) >= top_k:
+            break
+
+    return unique_results
 
 # Точный поиск с использованием лемм и синонимов
 def keyword_search(query, df):
