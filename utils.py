@@ -3,27 +3,31 @@ import requests
 import re
 from io import BytesIO
 from sentence_transformers import SentenceTransformer, util
-from nltk.stem.snowball import SnowballStemmer
+import pymorphy2
 
 # Модель для семантического поиска
 model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
-# Стеммер для русского языка
-stemmer = SnowballStemmer("russian")
+# Лемматизатор pymorphy2
+morph = pymorphy2.MorphAnalyzer()
 
-# Глобальный словарь синонимов
+# Синонимические группы
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
     ["кредитка", "кредитная карта", "кредитной картой", "картой"],
     ["наличные", "наличка", "наличными"]
 ]
 
-# Построение взаимного словаря синонимов (быстрый доступ)
+# Преобразование слов в леммы
+def lemmatize(word):
+    return morph.parse(word)[0].normal_form
+
+# Построение словаря синонимов на основе лемм
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    for word in group:
-        stem = stemmer.stem(word.lower())
-        SYNONYM_DICT[stem] = {stemmer.stem(w) for w in group}
+    lemmas = {lemmatize(w.lower()) for w in group}
+    for lemma in lemmas:
+        SYNONYM_DICT[lemma] = lemmas
 
 # Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
@@ -79,48 +83,4 @@ def load_all_excels():
             print(f"⚠️ Ошибка с {url}: {e}")
     if not dfs:
         raise ValueError("Не удалось загрузить ни одного файла")
-    return pd.concat(dfs, ignore_index=True)
-
-# Семантический поиск
-def semantic_search(query, df, top_k=5, threshold=0.5):
-    query_proc = preprocess(query)
-    query_emb = model.encode(query_proc, convert_to_tensor=True)
-    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
-
-    sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
-    results = []
-
-    for idx, score in enumerate(sims):
-        score = float(score)
-        if score >= threshold:
-            phrase_full = df.iloc[idx]['phrase_full']
-            topics = df.iloc[idx]['topics']
-            results.append((score, phrase_full, topics))
-
-    results.sort(key=lambda x: x[0], reverse=True)
-    return results[:top_k]
-
-# Точный поиск с учетом всех слов и синонимов
-def keyword_search(query, df):
-    query_proc = preprocess(query)
-    query_words = re.findall(r"\w+", query_proc)
-    query_stems = [stemmer.stem(word) for word in query_words]
-
-    matched = []
-    for _, row in df.iterrows():
-        phrase_words = re.findall(r"\w+", row['phrase_proc'])
-        phrase_stems = {stemmer.stem(word) for word in phrase_words}
-
-        # Все слова запроса (или их синонимы) должны присутствовать в фразе
-        if all(
-            any(
-                qs in SYNONYM_DICT.get(ps, {ps})
-                for ps in phrase_stems
-            )
-            for qs in query_stems
-        ):
-            matched.append((row['phrase'], row['topics']))
-
-    return matched
-
-
+    return pd.concat(dfs, ignore_index=Tr_
