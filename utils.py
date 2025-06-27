@@ -83,4 +83,45 @@ def load_all_excels():
             print(f"⚠️ Ошибка с {url}: {e}")
     if not dfs:
         raise ValueError("Не удалось загрузить ни одного файла")
-    return pd.concat(dfs, ignore_index=Tr_
+    return pd.concat(dfs, ignore_index=True)
+
+# Семантический поиск
+def semantic_search(query, df, top_k=5, threshold=0.5):
+    query_proc = preprocess(query)
+    query_emb = model.encode(query_proc, convert_to_tensor=True)
+    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
+
+    sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
+    results = []
+
+    for idx, score in enumerate(sims):
+        score = float(score)
+        if score >= threshold:
+            phrase_full = df.iloc[idx]['phrase_full']
+            topics = df.iloc[idx]['topics']
+            results.append((score, phrase_full, topics))
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    return results[:top_k]
+
+# Точный поиск с использованием лемм и синонимов
+def keyword_search(query, df):
+    query_proc = preprocess(query)
+    query_words = re.findall(r"\w+", query_proc)
+    query_lemmas = [lemmatize(word) for word in query_words]
+
+    matched = []
+    for _, row in df.iterrows():
+        phrase_words = re.findall(r"\w+", row['phrase_proc'])
+        phrase_lemmas = {lemmatize(word) for word in phrase_words}
+
+        if all(
+            any(
+                ql in SYNONYM_DICT.get(pl, {pl})
+                for pl in phrase_lemmas
+            )
+            for ql in query_lemmas
+        ):
+            matched.append((row['phrase'], row['topics']))
+
+    return matched
