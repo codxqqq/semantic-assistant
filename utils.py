@@ -92,9 +92,9 @@ def load_all_excels():
         raise ValueError("Не удалось загрузить ни одного файла")
     return pd.concat(dfs, ignore_index=True)
 
-# Семантический поиск с подзапросами
-def semantic_search(query, df, top_k=5, threshold=0.5):
-    subqueries = split_into_subqueries(query)
+# Семантический поиск с возможностью включения/отключения подзапросов
+def semantic_search(query, df, top_k=5, threshold=0.5, enable_split=True):
+    subqueries = split_into_subqueries(query) if enable_split else [preprocess(query)]
     phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
     all_results = []
