@@ -5,7 +5,6 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer, util
 import pymorphy2
 import functools
-import torch
 
 # ⚡ Ленивое создание модели
 @functools.lru_cache(maxsize=1)
@@ -77,12 +76,6 @@ def load_excel(url):
     df['phrase_proc'] = df['phrase'].apply(preprocess)
     return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
 
-# 🔁 Вычисление и добавление эмбеддингов
-def compute_embeddings(df):
-    model = get_model()
-    df['embedding'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
-    return df
-
 # Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
@@ -93,35 +86,36 @@ def load_all_excels():
             print(f"⚠️ Ошибка с {url}: {e}")
     if not dfs:
         raise ValueError("Не удалось загрузить ни одного файла")
-    df = pd.concat(dfs, ignore_index=True)
-    return compute_embeddings(df)
+    return pd.concat(dfs, ignore_index=True)
 
-# ✅ Семантический поиск (с использованием кэшированных эмбеддингов)
+# Семантический поиск
 def semantic_search(query, df, top_k=5, threshold=0.5):
     model = get_model()
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
+    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
-    sims = util.pytorch_cos_sim(query_emb, torch.stack(df['embedding'].tolist()))[0]
+    sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
     results = [
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
         for idx, score in enumerate(sims) if float(score) >= threshold
     ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
-# ✅ Точный поиск (оптимизированный через apply)
+# ✅ Точный поиск (оптимизированный)
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
     query_lemmas = [lemmatize_cached(word) for word in query_words]
 
-    def match_row(row):
+    matched = []
+    for row in df.itertuples():
         phrase_words = re.findall(r"\w+", row.phrase_proc)
         phrase_lemmas = {lemmatize_cached(word) for word in phrase_words}
-        return all(
+
+        if all(
             any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
-        )
-
-    matches = df[df.apply(match_row, axis=1)]
-    return list(zip(matches['phrase'], matches['topics']))
+        ):
+            matched.append((row.phrase, row.topics))
+    return matched
