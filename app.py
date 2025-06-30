@@ -4,11 +4,15 @@ from utils import load_all_excels, semantic_search, keyword_search
 st.set_page_config(page_title="Semantic Assistant", layout="centered")
 st.title("🤖 Semantic Assistant")
 
+@st.cache_data
+def get_data():
+    return load_all_excels()
+
 query = st.text_input("Введите ваш запрос:")
 
 if query:
     try:
-        df = load_all_excels()
+        df = get_data()
         results = semantic_search(query, df)
 
         if results:
@@ -18,7 +22,6 @@ if query:
         else:
             st.warning("Совпадений не найдено в умном поиске.")
 
-        # Точный поиск всегда показывается снизу
         exact_results = keyword_search(query, df)
         if exact_results:
             st.markdown("### 🧷 Точный поиск:")
