@@ -26,6 +26,11 @@ def preprocess(text):
 def lemmatize(word):
     return get_morph().parse(word)[0].normal_form
 
+# ✅ Кэшируемая лемматизация для ускорения точного поиска
+@functools.lru_cache(maxsize=10000)
+def lemmatize_cached(word):
+    return lemmatize(word)
+
 # Синонимические группы
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
@@ -97,22 +102,20 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
-# Точный поиск
+# ✅ Точный поиск (оптимизированный)
 def keyword_search(query, df):
-    query_lemmas = {lemmatize(word) for word in re.findall(r"\w+", preprocess(query))}
+    query_proc = preprocess(query)
+    query_words = re.findall(r"\w+", query_proc)
+    query_lemmas = [lemmatize_cached(word) for word in query_words]
 
     matched = []
-    for _, row in df.iterrows():
-        phrase_lemmas = row['lemmas']
+    for row in df.itertuples():
+        phrase_words = re.findall(r"\w+", row.phrase_proc)
+        phrase_lemmas = {lemmatize_cached(word) for word in phrase_words}
 
         if all(
-            any(
-                ql in SYNONYM_DICT.get(pl, {pl})
-                for pl in phrase_lemmas
-            )
+            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
-            matched.append((row['phrase'], row['topics']))
-
+            matched.append((row.phrase, row.topics))
     return matched
-
