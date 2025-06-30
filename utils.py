@@ -26,6 +26,7 @@ def preprocess(text):
 def lemmatize(word):
     return get_morph().parse(word)[0].normal_form
 
+# ✅ Кэшируемая лемматизация для ускорения точного поиска
 @functools.lru_cache(maxsize=10000)
 def lemmatize_cached(word):
     return lemmatize(word)
@@ -37,16 +38,12 @@ SYNONYM_GROUPS = [
     ["наличные", "наличка", "наличными"]
 ]
 
-# Построение отображения леммы на каноническую форму
-SYNONYM_MAP = {}
+# Построение словаря синонимов
+SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    lemmas = sorted({lemmatize(w.lower()) for w in group})
-    base = lemmas[0]
+    lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
-        SYNONYM_MAP[lemma] = base
-
-def normalize_lemma(lemma):
-    return SYNONYM_MAP.get(lemma, lemma)
+        SYNONYM_DICT[lemma] = lemmas
 
 # Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
@@ -55,9 +52,10 @@ GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
-def lemmatize_phrase(phrase_proc):
-    words = re.findall(r"\w+", phrase_proc)
-    return {normalize_lemma(lemmatize_cached(w)) for w in words}
+# Разделение фраз по /
+def split_by_slash(phrase):
+    parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
+    return parts if parts else [phrase]
 
 # ✅ Векторизованная загрузка Excel-файла
 def load_excel(url):
@@ -72,16 +70,11 @@ def load_excel(url):
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
     df['phrase_full'] = df['phrase']
-    df = df.assign(phrase_list=df['phrase'].str.split('/')).explode('phrase_list')
-    df['phrase'] = df['phrase_list'].str.strip()
+    df['phrase_list'] = df['phrase'].apply(split_by_slash)
+    df = df.explode('phrase_list', ignore_index=True)
+    df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-    df['phrase_lemmas'] = df['phrase_proc'].apply(lemmatize_phrase)
-
-    # ⚡ Предварительное кодирование эмбеддингов
-    model = get_model()
-    df['embedding'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True, show_progress_bar=False)
-
-    return df[['phrase', 'phrase_proc', 'phrase_full', 'topics', 'phrase_lemmas', 'embedding']]
+    return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
 
 # Загрузка всех Excel-файлов
 def load_all_excels():
@@ -100,8 +93,9 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     model = get_model()
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
-    sims = util.pytorch_cos_sim(query_emb, list(df['embedding']))[0]
+    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
+    sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
     results = [
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
         for idx, score in enumerate(sims) if float(score) >= threshold
@@ -112,12 +106,15 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
-    query_lemmas = [normalize_lemma(lemmatize_cached(word)) for word in query_words]
+    query_lemmas = [lemmatize_cached(word) for word in query_words]
 
     matched = []
     for row in df.itertuples():
+        phrase_words = re.findall(r"\w+", row.phrase_proc)
+        phrase_lemmas = {lemmatize_cached(word) for word in phrase_words}
+
         if all(
-            any(ql == pl for pl in row.phrase_lemmas)
+            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
             matched.append((row.phrase, row.topics))
