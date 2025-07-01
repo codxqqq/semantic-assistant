@@ -78,7 +78,6 @@ def load_excel(url):
     df['phrase_proc'] = df['phrase'].apply(preprocess)
     return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
 
-
 # Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
