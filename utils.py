@@ -5,6 +5,8 @@ from io import BytesIO
 from sentence_transformers import SentenceTransformer, util
 import pymorphy2
 import functools
+import torch
+from typing import List, Tuple
 
 # ⚡ Ленивое создание модели
 @functools.lru_cache(maxsize=1)
@@ -17,18 +19,18 @@ def get_morph():
     return pymorphy2.MorphAnalyzer()
 
 # Нормализация строки
-def preprocess(text):
+def preprocess(text: str) -> str:
     text = str(text).lower().strip()
     text = re.sub(r"\s+", " ", text)
     return text
 
 # Лемматизация
-def lemmatize(word):
+def lemmatize(word: str) -> str:
     return get_morph().parse(word)[0].normal_form
 
-# ✅ Кэшируемая лемматизация для ускорения точного поиска
+# ✅ Кэшируемая лемматизация
 @functools.lru_cache(maxsize=10000)
-def lemmatize_cached(word):
+def lemmatize_cached(word: str) -> str:
     return lemmatize(word)
 
 # Синонимические группы
@@ -38,12 +40,13 @@ SYNONYM_GROUPS = [
     ["наличные", "наличка", "наличными"]
 ]
 
-# Построение словаря синонимов
-SYNONYM_DICT = {}
+# Построение карты лемма → каноническая форма
+SYNONYM_MAP = {}
 for group in SYNONYM_GROUPS:
     lemmas = {lemmatize(w.lower()) for w in group}
+    main = sorted(lemmas)[0]
     for lemma in lemmas:
-        SYNONYM_DICT[lemma] = lemmas
+        SYNONYM_MAP[lemma] = main
 
 # Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
@@ -53,12 +56,12 @@ GITHUB_CSV_URLS = [
 ]
 
 # Разделение фраз по /
-def split_by_slash(phrase):
+def split_by_slash(phrase: str) -> List[str]:
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
     return parts if parts else [phrase]
 
 # ✅ Векторизованная загрузка Excel-файла
-def load_excel(url):
+def load_excel(url: str) -> pd.DataFrame:
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
@@ -74,10 +77,15 @@ def load_excel(url):
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-    return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
 
-# Загрузка всех Excel-файлов
-def load_all_excels():
+    # ⚡ Встроенное кодирование фраз в эмбеддинги
+    model = get_model()
+    df['embedding'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
+    return df[['phrase', 'phrase_proc', 'phrase_full', 'topics', 'embedding']]
+
+# ✅ Кэшируем загрузку всех Excel-файлов
+@functools.lru_cache(maxsize=1)
+def load_all_excels() -> pd.DataFrame:
     dfs = []
     for url in GITHUB_CSV_URLS:
         try:
@@ -88,22 +96,23 @@ def load_all_excels():
         raise ValueError("Не удалось загрузить ни одного файла")
     return pd.concat(dfs, ignore_index=True)
 
-# Семантический поиск
-def semantic_search(query, df, top_k=5, threshold=0.5):
+# ⚡ Семантический поиск с предрассчитанными эмбеддингами
+def semantic_search(query: str, df: pd.DataFrame, top_k: int = 5, threshold: float = 0.5) -> List[Tuple[float, str, list]]:
     model = get_model()
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
-    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
+    phrase_embs = torch.stack(df['embedding'].tolist())
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
+
     results = [
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
         for idx, score in enumerate(sims) if float(score) >= threshold
     ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
-# ✅ Точный поиск (оптимизированный)
-def keyword_search(query, df):
+# Точный поиск
+def keyword_search(query: str, df: pd.DataFrame) -> List[Tuple[str, list]]:
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
     query_lemmas = [lemmatize_cached(word) for word in query_words]
@@ -114,7 +123,7 @@ def keyword_search(query, df):
         phrase_lemmas = {lemmatize_cached(word) for word in phrase_words}
 
         if all(
-            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
+            any(ql == SYNONYM_MAP.get(pl, pl) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
             matched.append((row.phrase, row.topics))
