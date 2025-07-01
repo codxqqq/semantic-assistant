@@ -26,7 +26,7 @@ def preprocess(text):
 def lemmatize(word):
     return get_morph().parse(word)[0].normal_form
 
-# ✅ Кэшируемая лемматизация
+# ✅ Кэшируемая лемматизация для ускорения точного поиска
 @functools.lru_cache(maxsize=10000)
 def lemmatize_cached(word):
     return lemmatize(word)
@@ -74,7 +74,13 @@ def load_excel(url):
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-    return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
+
+    # ✅ Предвычисляем леммы фразы один раз
+    df['phrase_lemmas'] = df['phrase_proc'].apply(
+        lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
+    )
+
+    return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
 
 # Загрузка всех Excel-файлов
 def load_all_excels():
@@ -102,7 +108,7 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
-# ✅ Обновлённый точный поиск с учетом синонимов
+# ✅ Точный поиск (оптимизированный)
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
@@ -110,16 +116,10 @@ def keyword_search(query, df):
 
     matched = []
     for row in df.itertuples():
-        phrase_words = re.findall(r"\w+", row.phrase_proc)
-        phrase_lemmas = {lemmatize_cached(word) for word in phrase_words}
+        phrase_lemmas = row.phrase_lemmas  # ✅ Используем предвычисленные леммы
 
-        # Проверяем, содержится ли каждый лемматизированный запрос в леммах фразы
-        # или среди её синонимов
         if all(
-            any(
-                ql in SYNONYM_DICT.get(pl, {pl})  # ищем ql среди синонимов pl
-                for pl in phrase_lemmas
-            )
+            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
             matched.append((row.phrase, row.topics))
