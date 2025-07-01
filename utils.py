@@ -57,24 +57,27 @@ def split_by_slash(phrase):
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
     return parts if parts else [phrase]
 
-# ✅ Векторизованная загрузка Excel-файла
+# ✅ Устойчивый и совместимый парсер Excel-файла
 def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
     df = pd.read_excel(BytesIO(response.content))
 
-    topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
-    if not topic_cols:
-        raise KeyError("Не найдены колонки topics")
+    # Проверка на наличие нужных колонок
+    if 'phrase' not in df.columns or 'topics' not in df.columns:
+        raise KeyError("Требуемые колонки 'phrase' и 'topics' не найдены")
 
-    df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
+    df['topics'] = df['topics'].astype(str).apply(
+        lambda x: [x.strip()] if x and x.strip().lower() != 'nan' else []
+    )
     df['phrase_full'] = df['phrase']
     df['phrase_list'] = df['phrase'].apply(split_by_slash)
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
     return df[['phrase', 'phrase_proc', 'phrase_full', 'topics']]
+
 
 # Загрузка всех Excel-файлов
 def load_all_excels():
