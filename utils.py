@@ -61,7 +61,7 @@ def load_csv(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
-    df = pd.read_csv(BytesIO(response.content), encoding='utf-8')
+    df = pd.read_csv(BytesIO(response.content), encoding='cp1251', errors='replace')
 
     topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
     if not topic_cols:
