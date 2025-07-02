@@ -46,9 +46,9 @@ SYNONYM_DICT = {
 
 # Ссылки на CSV-файлы
 GITHUB_CSV_URLS = [
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.csv",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.csv",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.csv"
+    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data1.csv",
+    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data2.csv",
+    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data3.csv"
 ]
 
 # Разделение фраз по /
