@@ -6,12 +6,6 @@ from sentence_transformers import SentenceTransformer, util
 import pymorphy2
 import functools
 
-try:
-    import streamlit as st
-    cache_decorator = st.cache_data
-except ImportError:
-    cache_decorator = lambda func: func  # если не используешь Streamlit
-
 # ⚡ Ленивое создание модели
 @functools.lru_cache(maxsize=1)
 def get_model():
@@ -32,23 +26,30 @@ def preprocess(text):
 def lemmatize(word):
     return get_morph().parse(word)[0].normal_form
 
-# ✅ Кэшируемая лемматизация
+# ✅ Кэшируемая лемматизация для ускорения точного поиска
 @functools.lru_cache(maxsize=10000)
 def lemmatize_cached(word):
     return lemmatize(word)
 
-# ✅ Предсобранный словарь синонимов
-SYNONYM_DICT = {
-    'сим': {'сим', 'симка', 'симкарта'},
-    'кредитка': {'кредитка', 'карта'},
-    'наличные': {'наличные', 'наличка'}
-}
+# Синонимические группы
+SYNONYM_GROUPS = [
+    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
+    ["кредитка", "кредитная карта", "кредитной картой", "картой"],
+    ["наличные", "наличка", "наличными"]
+]
 
-# Ссылки на CSV-файлы
+# Построение словаря синонимов
+SYNONYM_DICT = {}
+for group in SYNONYM_GROUPS:
+    lemmas = {lemmatize(w.lower()) for w in group}
+    for lemma in lemmas:
+        SYNONYM_DICT[lemma] = lemmas
+
+# Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data1.csv",
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data2.csv",
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data3.csv"
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
 # Разделение фраз по /
@@ -56,12 +57,12 @@ def split_by_slash(phrase):
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
     return parts if parts else [phrase]
 
-# ✅ Загрузка CSV-файла
-def load_csv(url):
+# ✅ Векторизованная загрузка Excel-файла
+def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
-    df = pd.read_csv(BytesIO(response.content), encoding='utf-8')
+    df = pd.read_excel(BytesIO(response.content))
 
     topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
     if not topic_cols:
@@ -81,13 +82,12 @@ def load_csv(url):
 
     return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
 
-# ✅ Кэшируемая загрузка всех CSV-файлов
-@cache_decorator
+# Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
     for url in GITHUB_CSV_URLS:
         try:
-            dfs.append(load_csv(url))
+            dfs.append(load_excel(url))
         except Exception as e:
             print(f"⚠️ Ошибка с {url}: {e}")
     if not dfs:
@@ -112,11 +112,11 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
-    query_lemmas = set(map(lemmatize_cached, query_words))  # 🔥 Быстрее, чем list
+    query_lemmas = [lemmatize_cached(word) for word in query_words]
 
     matched = []
     for row in df.itertuples():
-        phrase_lemmas = row.phrase_lemmas
+        phrase_lemmas = row.phrase_lemmas  # ✅ Используем предвычисленные леммы
 
         if all(
             any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
