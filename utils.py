@@ -62,7 +62,7 @@ def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
-    df = pd.read_excel(BytesIO(response.content))
+    df = pd.read_csv(BytesIO(response.content))
 
     topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
     if not topic_cols:
