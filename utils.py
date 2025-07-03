@@ -122,5 +122,5 @@ def keyword_search(query, df):
             any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
-            matched.append((row.phrase, row.topics))
+            matched.append((row.phrase_full, row.topics))
     return matched
