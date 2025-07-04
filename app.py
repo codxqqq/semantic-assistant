@@ -9,7 +9,6 @@ st.title("🤖 Semantic Assistant")
 @st.cache_data
 def get_data():
     df = load_all_excels()
-    # Предварительно вычисляем эмбеддинги
     from utils import get_model
     model = get_model()
     df.attrs['phrase_embs'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
@@ -17,9 +16,18 @@ def get_data():
 
 df = get_data()
 
+# 🔘 Все уникальные тематики
 all_topics = sorted({topic for topics in df['topics'] for topic in topics})
-selected_topics = st.multiselect("Фильтр по тематикам (необязательно):", all_topics)
+selected_topics = st.multiselect("Фильтр по тематикам (независимо от поиска):", all_topics)
 
+# 📌 Независимая фильтрация по темам
+if selected_topics:
+    st.markdown("### 📂 Фразы по выбранным тематикам:")
+    filtered_df = df[df['topics'].apply(lambda topics: any(t in selected_topics for t in topics))]
+    for row in filtered_df.itertuples():
+        st.markdown(f"- **{row.phrase_full}** → {', '.join(row.topics)}")
+
+# 📥 Поисковый запрос
 query = st.text_input("Введите ваш запрос:")
 
 if query:
