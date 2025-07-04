@@ -4,4 +4,4 @@ pandas
 openpyxl
 sentence-transformers
 requests
-nltk
+pymorphy2
