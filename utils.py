@@ -47,9 +47,9 @@ for group in SYNONYM_GROUPS:
 
 # Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data1.csv",
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data2.csv",
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data3.csv"
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
 # Разделение фраз по /
@@ -62,7 +62,7 @@ def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
         raise ValueError(f"Ошибка загрузки {url}")
-    df = pd.read_csv(BytesIO(response.content), encoding='utf-8') 
+    df = pd.read_excel(BytesIO(response.content))
 
     topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
     if not topic_cols:
@@ -124,3 +124,26 @@ def keyword_search(query, df):
         ):
             matched.append((row.phrase_full, row.topics))
     return matched
+
+# 📌 Фильтрация по выбранным тематикам
+def filter_by_topics(results, selected_topics):
+    if not selected_topics:
+        return results
+
+    filtered = []
+    for item in results:
+        # Поддержка разных форматов: (score, phrase, topics) или (phrase, topics)
+        if isinstance(item, tuple) and len(item) == 3:
+            score, phrase, topics = item
+            filtered.append((score, phrase, topics))
+        elif isinstance(item, tuple) and len(item) == 2:
+            phrase, topics = item
+            filtered.append((phrase, topics))
+        else:
+            continue
+
+    # Отбор: хотя бы одна тема из выбранных присутствует
+    return [
+        item for item in filtered
+        if any(topic in item[-1] for topic in selected_topics)
+    ]
