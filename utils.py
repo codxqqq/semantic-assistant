@@ -3,47 +3,27 @@ import requests
 import re
 from io import BytesIO
 from sentence_transformers import SentenceTransformer, util
-import pymorphy2
-import functools
+from nltk.stem.snowball import SnowballStemmer
 
-# ⚡ Ленивое создание модели
-@functools.lru_cache(maxsize=1)
-def get_model():
-    return SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
+# Модель для семантического поиска
+model = SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
-# ⚡ Ленивый лемматизатор
-@functools.lru_cache(maxsize=1)
-def get_morph():
-    return pymorphy2.MorphAnalyzer()
+# Стеммер для русского языка
+stemmer = SnowballStemmer("russian")
 
-# Нормализация строки
-def preprocess(text):
-    text = str(text).lower().strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-# Лемматизация
-def lemmatize(word):
-    return get_morph().parse(word)[0].normal_form
-
-# ✅ Кэшируемая лемматизация для ускорения точного поиска
-@functools.lru_cache(maxsize=10000)
-def lemmatize_cached(word):
-    return lemmatize(word)
-
-# Синонимические группы
+# Глобальный словарь синонимов
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
     ["кредитка", "кредитная карта", "кредитной картой", "картой"],
     ["наличные", "наличка", "наличными"]
 ]
 
-# Построение словаря синонимов
+# Построение взаимного словаря синонимов (быстрый доступ)
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    lemmas = {lemmatize(w.lower()) for w in group}
-    for lemma in lemmas:
-        SYNONYM_DICT[lemma] = lemmas
+    for word in group:
+        stem = stemmer.stem(word.lower())
+        SYNONYM_DICT[stem] = {stemmer.stem(w) for w in group}
 
 # Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
@@ -52,12 +32,18 @@ GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
-# Разделение фраз по /
+# Нормализация строки
+def preprocess(text):
+    text = str(text).lower().strip()
+    text = re.sub(r"\s+", " ", text)
+    return text
+
+# Расширение строки на подфразы по /
 def split_by_slash(phrase):
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
-    return parts if parts else [phrase]
+    return parts if len(parts) > 1 else [phrase]
 
-# ✅ Векторизованная загрузка Excel-файла
+# Загрузка одного Excel-файла с разделением по /
 def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -68,26 +54,27 @@ def load_excel(url):
     if not topic_cols:
         raise KeyError("Не найдены колонки topics")
 
-    df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
-    df['phrase_full'] = df['phrase']
-    df['phrase_list'] = df['phrase'].apply(split_by_slash)
-    df = df.explode('phrase_list', ignore_index=True)
-    df['phrase'] = df['phrase_list']
-    df['phrase_proc'] = df['phrase'].apply(preprocess)
+    rows = []
+    for _, row in df.iterrows():
+        phrase = row['phrase']
+        topics = [t for t in row[topic_cols].fillna('').tolist() if t]
+        for sub_phrase in split_by_slash(phrase):
+            rows.append({
+                'phrase': sub_phrase,
+                'phrase_proc': preprocess(sub_phrase),
+                'phrase_full': phrase,  # новая колонка для отображения
+                'topics': topics
+            })
 
-    # ✅ Предвычисляем леммы фразы один раз
-    df['phrase_lemmas'] = df['phrase_proc'].apply(
-        lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
-    )
-
-    return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
+    return pd.DataFrame(rows)
 
 # Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
     for url in GITHUB_CSV_URLS:
         try:
-            dfs.append(load_excel(url))
+            df = load_excel(url)
+            dfs.append(df)
         except Exception as e:
             print(f"⚠️ Ошибка с {url}: {e}")
     if not dfs:
@@ -96,33 +83,44 @@ def load_all_excels():
 
 # Семантический поиск
 def semantic_search(query, df, top_k=5, threshold=0.5):
-    model = get_model()
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
     phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
-    results = [
-        (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
-        for idx, score in enumerate(sims) if float(score) >= threshold
-    ]
-    return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
+    results = []
 
-# ✅ Точный поиск (оптимизированный)
+    for idx, score in enumerate(sims):
+        score = float(score)
+        if score >= threshold:
+            phrase_full = df.iloc[idx]['phrase_full']
+            topics = df.iloc[idx]['topics']
+            results.append((score, phrase_full, topics))
+
+    results.sort(key=lambda x: x[0], reverse=True)
+    return results[:top_k]
+
+# Точный поиск с учетом всех слов и синонимов
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
-    query_lemmas = [lemmatize_cached(word) for word in query_words]
+    query_stems = [stemmer.stem(word) for word in query_words]
 
     matched = []
-    for row in df.itertuples():
-        phrase_lemmas = row.phrase_lemmas  # ✅ Используем предвычисленные леммы
+    for _, row in df.iterrows():
+        phrase_words = re.findall(r"\w+", row['phrase_proc'])
+        phrase_stems = {stemmer.stem(word) for word in phrase_words}
 
+        # Все слова запроса (или их синонимы) должны присутствовать в фразе
         if all(
-            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
-            for ql in query_lemmas
+            any(
+                qs in SYNONYM_DICT.get(ps, {ps})
+                for ps in phrase_stems
+            )
+            for qs in query_stems
         ):
-            matched.append((row.phrase_full, row.topics))
+            matched.append((row['phrase_full'], row['topics']))
+
     return matched
 
 # 📌 Фильтрация по выбранным тематикам
