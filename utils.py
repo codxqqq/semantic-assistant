@@ -124,9 +124,24 @@ def keyword_search(query, df):
     return matched
 
 # 📌 Фильтрация по выбранным тематикам
-filtered_df = filter_by_topics(df, selected_topics)
-if selected_topics:
-    st.markdown("### 🧭 Результаты по выбранным тематикам:")
-    for _, row in filtered_df.iterrows():
-        st.markdown(f"- **{row['phrase_full']}** → {', '.join(row['topics'])}")
+def filter_by_topics(results, selected_topics):
+    if not selected_topics:
+        return results
 
+    filtered = []
+    for item in results:
+        # Поддержка разных форматов: (score, phrase, topics) или (phrase, topics)
+        if isinstance(item, tuple) and len(item) == 3:
+            score, phrase, topics = item
+            filtered.append((score, phrase, topics))
+        elif isinstance(item, tuple) and len(item) == 2:
+            phrase, topics = item
+            filtered.append((phrase, topics))
+        else:
+            continue
+
+    # Отбор: хотя бы одна тема из выбранных присутствует
+    return [
+        item for item in filtered
+        if any(topic in item[-1] for topic in selected_topics)
+    ]
