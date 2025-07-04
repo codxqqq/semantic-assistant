@@ -1,3 +1,5 @@
+# utils.py
+
 import pandas as pd
 import requests
 import re
@@ -6,58 +8,48 @@ from sentence_transformers import SentenceTransformer, util
 import pymorphy2
 import functools
 
-# ⚡ Ленивое создание модели
 @functools.lru_cache(maxsize=1)
 def get_model():
     return SentenceTransformer('paraphrase-multilingual-MiniLM-L12-v2')
 
-# ⚡ Ленивый лемматизатор
 @functools.lru_cache(maxsize=1)
 def get_morph():
     return pymorphy2.MorphAnalyzer()
 
-# Нормализация строки
 def preprocess(text):
     text = str(text).lower().strip()
     text = re.sub(r"\s+", " ", text)
     return text
 
-# Лемматизация
 def lemmatize(word):
     return get_morph().parse(word)[0].normal_form
 
-# ✅ Кэшируемая лемматизация для ускорения точного поиска
 @functools.lru_cache(maxsize=10000)
 def lemmatize_cached(word):
     return lemmatize(word)
 
-# Синонимические группы
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
     ["кредитка", "кредитная карта", "кредитной картой", "картой"],
     ["наличные", "наличка", "наличными"]
 ]
 
-# Построение словаря синонимов
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
     lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
-# Ссылки на Excel-файлы
 GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
-# Разделение фраз по /
 def split_by_slash(phrase):
     parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
     return parts if parts else [phrase]
 
-# ✅ Векторизованная загрузка Excel-файла
 def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -74,15 +66,11 @@ def load_excel(url):
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-
-    # ✅ Предвычисляем леммы фразы один раз
     df['phrase_lemmas'] = df['phrase_proc'].apply(
         lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
     )
-
     return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
 
-# Загрузка всех Excel-файлов
 def load_all_excels():
     dfs = []
     for url in GITHUB_CSV_URLS:
@@ -94,13 +82,16 @@ def load_all_excels():
         raise ValueError("Не удалось загрузить ни одного файла")
     return pd.concat(dfs, ignore_index=True)
 
-# Семантический поиск
 def semantic_search(query, df, top_k=5, threshold=0.5):
     model = get_model()
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
-    phrase_embs = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
+    # ✅ Эмбеддинги кэшируются при первом вызове
+    if 'phrase_embs' not in df.attrs:
+        df.attrs['phrase_embs'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
+
+    phrase_embs = df.attrs['phrase_embs']
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
     results = [
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
@@ -108,7 +99,6 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
-# ✅ Точный поиск (оптимизированный)
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
@@ -116,8 +106,7 @@ def keyword_search(query, df):
 
     matched = []
     for row in df.itertuples():
-        phrase_lemmas = row.phrase_lemmas  # ✅ Используем предвычисленные леммы
-
+        phrase_lemmas = row.phrase_lemmas
         if all(
             any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
@@ -125,25 +114,18 @@ def keyword_search(query, df):
             matched.append((row.phrase_full, row.topics))
     return matched
 
-# 📌 Фильтрация по выбранным тематикам
 def filter_by_topics(results, selected_topics):
     if not selected_topics:
         return results
 
     filtered = []
     for item in results:
-        # Поддержка разных форматов: (score, phrase, topics) или (phrase, topics)
         if isinstance(item, tuple) and len(item) == 3:
             score, phrase, topics = item
-            filtered.append((score, phrase, topics))
+            if set(topics) & set(selected_topics):
+                filtered.append((score, phrase, topics))
         elif isinstance(item, tuple) and len(item) == 2:
             phrase, topics = item
-            filtered.append((phrase, topics))
-        else:
-            continue
-
-    # Отбор: хотя бы одна тема из выбранных присутствует
-    return [
-        item for item in filtered
-        if any(topic in item[-1] for topic in selected_topics)
-    ]
+            if set(topics) & set(selected_topics):
+                filtered.append((phrase, topics))
+    return filtered
