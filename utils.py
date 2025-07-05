@@ -1,3 +1,4 @@
+
 import pandas as pd
 import requests
 import re
@@ -98,9 +99,11 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     for idx, score in enumerate(sims):
         if float(score) >= threshold:
             phrase_full = df.iloc[idx]['phrase_full']
-            if phrase_full not in seen:
-                results.append((float(score), phrase_full, df.iloc[idx]['topics']))
-                seen.add(phrase_full)
+            topics = tuple(sorted(df.iloc[idx]['topics']))
+            key = (phrase_full, topics)
+            if key not in seen:
+                results.append((float(score), phrase_full, list(topics)))
+                seen.add(key)
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
@@ -132,12 +135,14 @@ def filter_by_topics(results, selected_topics):
     for item in results:
         if isinstance(item, tuple) and len(item) == 3:
             score, phrase, topics = item
-            if phrase not in seen and set(topics) & set(selected_topics):
+            key = (phrase, tuple(sorted(topics)))
+            if key not in seen and set(topics) & set(selected_topics):
                 filtered.append((score, phrase, topics))
-                seen.add(phrase)
+                seen.add(key)
         elif isinstance(item, tuple) and len(item) == 2:
             phrase, topics = item
-            if phrase not in seen and set(topics) & set(selected_topics):
+            key = (phrase, tuple(sorted(topics)))
+            if key not in seen and set(topics) & set(selected_topics):
                 filtered.append((phrase, topics))
-                seen.add(phrase)
+                seen.add(key)
     return filtered
