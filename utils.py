@@ -1,5 +1,3 @@
-# utils.py
-
 import pandas as pd
 import requests
 import re
@@ -37,11 +35,27 @@ SYNONYM_GROUPS = [
     ["потерял", "утеря", "потеря", "утерял"]
 ]
 
+# Создаем словарь для замены фраз по приоритету (длина убыв.)
+PHRASE_SYNONYMS = {}
+for group in SYNONYM_GROUPS:
+    group_sorted = sorted(group, key=len, reverse=True)
+    canonical = group_sorted[0]
+    for variant in group_sorted:
+        PHRASE_SYNONYMS[variant] = canonical
+
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
     lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
+
+def replace_synonyms_in_text(text):
+    """Заменяет многословные и односоставные синонимы в тексте"""
+    text_proc = text.lower()
+    for phrase, canonical in sorted(PHRASE_SYNONYMS.items(), key=lambda x: -len(x[0])):
+        pattern = rf"\b{re.escape(phrase)}\b"
+        text_proc = re.sub(pattern, canonical, text_proc)
+    return preprocess(text_proc)
 
 GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data4.xlsx",
@@ -64,11 +78,17 @@ def load_excel(url):
         raise KeyError("Не найдены колонки topics")
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
+
     df['phrase_full'] = df['phrase']
     df['phrase_list'] = df['phrase'].apply(split_by_slash)
+
+    # Удаляем дубликаты подфраз
     df = df.explode('phrase_list', ignore_index=True)
+    df['phrase_list'] = df['phrase_list'].apply(str.strip)
+    df.drop_duplicates(subset=['phrase_list'], inplace=True)
+
     df['phrase'] = df['phrase_list']
-    df['phrase_proc'] = df['phrase'].apply(preprocess)
+    df['phrase_proc'] = df['phrase'].apply(replace_synonyms_in_text)
     df['phrase_lemmas'] = df['phrase_proc'].apply(
         lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
     )
@@ -87,10 +107,9 @@ def load_all_excels():
 
 def semantic_search(query, df, top_k=5, threshold=0.5):
     model = get_model()
-    query_proc = preprocess(query)
+    query_proc = replace_synonyms_in_text(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
 
-    # ✅ Эмбеддинги кэшируются при первом вызове
     if 'phrase_embs' not in df.attrs:
         df.attrs['phrase_embs'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
@@ -103,7 +122,7 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
-    query_proc = preprocess(query)
+    query_proc = replace_synonyms_in_text(query)
     query_words = re.findall(r"\w+", query_proc)
     query_lemmas = [lemmatize_cached(word) for word in query_words]
 
