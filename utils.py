@@ -52,24 +52,21 @@ def split_by_slash(phrase):
 
 def load_excel(url):
     response = requests.get(url)
-    if response.status_code != 200:
-        raise ValueError(f"Ошибка загрузки {url}")
+    response.raise_for_status()
     df = pd.read_excel(BytesIO(response.content))
 
-    topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
+    topic_cols = [c for c in df.columns if c.lower().startswith("topics")]
     if not topic_cols:
         raise KeyError("Не найдены колонки topics")
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
-    df['phrase_full'] = df['phrase'].apply(preprocess)  # нормализация
+    df['phrase_full'] = df['phrase'].apply(preprocess)
 
     df['phrase_list'] = df['phrase'].apply(split_by_slash)
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-    df['phrase_lemmas'] = df['phrase_proc'].apply(
-        lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
-    )
+    df['phrase_lemmas'] = df['phrase_proc'].apply(lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)})
     return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
 
 def load_all_excels():
@@ -108,40 +105,34 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
 
 def keyword_search(query, df):
     query_proc = preprocess(query)
-    query_words = re.findall(r"\w+", query_proc)
-    query_lemmas = {lemmatize_cached(word) for word in query_words}
+    query_lemmas = {lemmatize_cached(w) for w in re.findall(r"\w+", query_proc)}
 
     matched = []
-    seen_phrases = set()
-
+    seen = set()
     for row in df.itertuples():
-        phrase_lemmas = row.phrase_lemmas
         expanded = set()
-        for pl in phrase_lemmas:
+        for pl in row.phrase_lemmas:
             expanded.update(SYNONYM_DICT.get(pl, {pl}))
         if query_lemmas.issubset(expanded):
-            if row.phrase_full not in seen_phrases:
+            key = (row.phrase_full, tuple(sorted(row.topics)))
+            if key not in seen:
                 matched.append((row.phrase_full, row.topics))
-                seen_phrases.add(row.phrase_full)
+                seen.add(key)
     return matched
 
 def filter_by_topics(results, selected_topics):
     if not selected_topics:
         return results
-
     filtered = []
     seen = set()
     for item in results:
-        if isinstance(item, tuple) and len(item) == 3:
+        if len(item) == 3:
             score, phrase, topics = item
-            key = (phrase, tuple(sorted(topics)))
-            if key not in seen and set(topics) & set(selected_topics):
-                filtered.append((score, phrase, topics))
-                seen.add(key)
-        elif isinstance(item, tuple) and len(item) == 2:
+        else:
             phrase, topics = item
-            key = (phrase, tuple(sorted(topics)))
-            if key not in seen and set(topics) & set(selected_topics):
-                filtered.append((phrase, topics))
-                seen.add(key)
+            score = None
+        key = (phrase, tuple(sorted(topics)))
+        if key not in seen and set(topics) & set(selected_topics):
+            filtered.append(item)
+            seen.add(key)
     return filtered
