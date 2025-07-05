@@ -30,13 +30,13 @@ def lemmatize_cached(word):
 
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
-    ["кредитки", "кредитная карта", "кредитной картой", "кредитной карты"],
+    ["кредитка", "кредитная карта", "кредитной картой", "картой"],
     ["наличные", "наличка", "наличными"]
 ]
 
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    lemmas = {lemmatize(w.lower()) for w in group}
+    lemmas = {lemmatize(w.lower()) for w in group for w in re.findall(r"\w+", w)}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
@@ -96,12 +96,7 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
         for idx, score in enumerate(sims) if float(score) >= threshold
     ]
-
-    unique = {}
-    for score, phrase, topics in results:
-        if phrase not in unique:
-            unique[phrase] = (score, phrase, topics)
-    return list(unique.values())[:top_k]
+    return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
     query_proc = preprocess(query)
@@ -109,21 +104,19 @@ def keyword_search(query, df):
     query_lemmas = [lemmatize_cached(word) for word in query_words]
 
     matched = []
+    seen_phrases = set()
+
     for row in df.itertuples():
         phrase_lemmas = row.phrase_lemmas
         if all(
-            SYNONYM_DICT.get(ql, {ql}) & phrase_lemmas
+            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
             for ql in query_lemmas
         ):
-            matched.append((row.phrase_full, row.topics))
+            if row.phrase_full not in seen_phrases:
+                matched.append((row.phrase_full, row.topics))
+                seen_phrases.add(row.phrase_full)
 
-    seen = set()
-    unique = []
-    for phrase, topics in matched:
-        if phrase not in seen:
-            seen.add(phrase)
-            unique.append((phrase, topics))
-    return unique
+    return matched
 
 def filter_by_topics(results, selected_topics):
     if not selected_topics:
