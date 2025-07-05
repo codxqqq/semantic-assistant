@@ -26,46 +26,43 @@ def lemmatize(word):
 def lemmatize_cached(word):
     return lemmatize(word)
 
+# 🔁 Группы синонимов
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
     ["кредитная карта", "кредитка"],
     ["наличные", "наличка", "наличными"],
     ["дебетовая карта", "дебетовка", "дебетовая"],
     ["карточка", "карта"],
-    ["потерял", "утеря", "потеря", "утерял"]
+    ["потерял", "утеря", "потеря", "утерял"],
+    ["украли", "кража", "украден", "украсть"]
 ]
 
-# Создаем словарь для замены фраз по приоритету (длина убыв.)
+# 🔁 Многословные замены
 PHRASE_SYNONYMS = {}
 for group in SYNONYM_GROUPS:
-    group_sorted = sorted(group, key=len, reverse=True)
-    canonical = group_sorted[0]
-    for variant in group_sorted:
+    canonical = group[0]
+    for variant in group:
         PHRASE_SYNONYMS[variant] = canonical
 
+# 🔁 Лемматические синонимы
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
     lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
-def replace_synonyms_in_text(text):
-    """Заменяет многословные и односоставные синонимы в тексте"""
-    text_proc = text.lower()
+def replace_phrase_synonyms(text):
+    text = text.lower()
     for phrase, canonical in sorted(PHRASE_SYNONYMS.items(), key=lambda x: -len(x[0])):
-        pattern = rf"\b{re.escape(phrase)}\b"
-        text_proc = re.sub(pattern, canonical, text_proc)
-    return preprocess(text_proc)
+        pattern = r"\b" + re.escape(phrase) + r"\b"
+        text = re.sub(pattern, canonical, text)
+    return preprocess(text)
 
 GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data4.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data21.xlsx",
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data31.xlsx"
 ]
-
-def split_by_slash(phrase):
-    parts = [p.strip() for p in str(phrase).split("/") if p.strip()]
-    return parts if parts else [phrase]
 
 def load_excel(url):
     response = requests.get(url)
@@ -79,16 +76,12 @@ def load_excel(url):
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
 
-    df['phrase_full'] = df['phrase']
-    df['phrase_list'] = df['phrase'].apply(split_by_slash)
+    # ❗ Только полные фразы без split
+    df['phrase_full'] = df['phrase'].astype(str).str.strip()
+    df = df.drop_duplicates(subset='phrase_full')
 
-    # Удаляем дубликаты подфраз
-    df = df.explode('phrase_list', ignore_index=True)
-    df['phrase_list'] = df['phrase_list'].apply(str.strip)
-    df.drop_duplicates(subset=['phrase_list'], inplace=True)
-
-    df['phrase'] = df['phrase_list']
-    df['phrase_proc'] = df['phrase'].apply(replace_synonyms_in_text)
+    df['phrase'] = df['phrase_full']
+    df['phrase_proc'] = df['phrase'].apply(replace_phrase_synonyms)
     df['phrase_lemmas'] = df['phrase_proc'].apply(
         lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
     )
@@ -107,7 +100,7 @@ def load_all_excels():
 
 def semantic_search(query, df, top_k=5, threshold=0.5):
     model = get_model()
-    query_proc = replace_synonyms_in_text(query)
+    query_proc = replace_phrase_synonyms(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
 
     if 'phrase_embs' not in df.attrs:
@@ -122,7 +115,7 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
-    query_proc = replace_synonyms_in_text(query)
+    query_proc = replace_phrase_synonyms(query)
     query_words = re.findall(r"\w+", query_proc)
     query_lemmas = [lemmatize_cached(word) for word in query_words]
 
