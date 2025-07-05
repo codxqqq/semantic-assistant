@@ -1,5 +1,3 @@
-# utils.py
-
 import pandas as pd
 import requests
 import re
@@ -30,13 +28,15 @@ def lemmatize_cached(word):
 
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
-    ["кредитка", "кредитная карта", "кредитной картой"],
+    ["кредитка", "кредитная карта", "кредитная карточка", "кредитной картой"],
+    ["дебетовка", "дебетовая карта", "дебетовая карточка", "дебетовой картой"],
+    ["карта", "карточка"],
     ["наличные", "наличка", "наличными"]
 ]
 
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    lemmas = {lemmatize(w.lower()) for w in group for w in re.findall(r"\w+", w)}
+    lemmas = {lemmatize_cached(w) for phrase in group for w in re.findall(r"\w+", phrase)}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
@@ -92,10 +92,15 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
 
     phrase_embs = df.attrs['phrase_embs']
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
-    results = [
-        (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
-        for idx, score in enumerate(sims) if float(score) >= threshold
-    ]
+
+    seen = set()
+    results = []
+    for idx, score in enumerate(sims):
+        if float(score) >= threshold:
+            phrase_full = df.iloc[idx]['phrase_full']
+            if phrase_full not in seen:
+                results.append((float(score), phrase_full, df.iloc[idx]['topics']))
+                seen.add(phrase_full)
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
@@ -123,13 +128,16 @@ def filter_by_topics(results, selected_topics):
         return results
 
     filtered = []
+    seen = set()
     for item in results:
         if isinstance(item, tuple) and len(item) == 3:
             score, phrase, topics = item
-            if set(topics) & set(selected_topics):
+            if phrase not in seen and set(topics) & set(selected_topics):
                 filtered.append((score, phrase, topics))
+                seen.add(phrase)
         elif isinstance(item, tuple) and len(item) == 2:
             phrase, topics = item
-            if set(topics) & set(selected_topics):
+            if phrase not in seen and set(topics) & set(selected_topics):
                 filtered.append((phrase, topics))
+                seen.add(phrase)
     return filtered
