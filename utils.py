@@ -1,4 +1,3 @@
-
 import pandas as pd
 import requests
 import re
@@ -62,7 +61,8 @@ def load_excel(url):
         raise KeyError("Не найдены колонки topics")
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
-    df['phrase_full'] = df['phrase']
+    df['phrase_full'] = df['phrase'].apply(preprocess)  # нормализация
+
     df['phrase_list'] = df['phrase'].apply(split_by_slash)
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
@@ -109,21 +109,20 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
 def keyword_search(query, df):
     query_proc = preprocess(query)
     query_words = re.findall(r"\w+", query_proc)
-    query_lemmas = [lemmatize_cached(word) for word in query_words]
+    query_lemmas = {lemmatize_cached(word) for word in query_words}
 
     matched = []
     seen_phrases = set()
 
     for row in df.itertuples():
         phrase_lemmas = row.phrase_lemmas
-        if all(
-            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
-            for ql in query_lemmas
-        ):
+        expanded = set()
+        for pl in phrase_lemmas:
+            expanded.update(SYNONYM_DICT.get(pl, {pl}))
+        if query_lemmas.issubset(expanded):
             if row.phrase_full not in seen_phrases:
                 matched.append((row.phrase_full, row.topics))
                 seen_phrases.add(row.phrase_full)
-
     return matched
 
 def filter_by_topics(results, selected_topics):
