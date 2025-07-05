@@ -28,28 +28,20 @@ def lemmatize(word):
 def lemmatize_cached(word):
     return lemmatize(word)
 
-RAW_SYNONYM_GROUPS = [
-    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
-    ["кредитная карта", "кредитка"],
+SYNONYM_GROUPS = [
+    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки", "сим-карты"],
+    ["кредитная карта", "кредитка", "кредиткой", "кредитки", "кредитной карты", "кредитной картой"],
     ["наличные", "наличка", "наличными"],
     ["дебетовая карта", "дебетовка", "дебетовая"],
     ["карточка", "карта"],
     ["потерял", "утеря", "потеря", "утерял"]
 ]
 
-def normalize_synonyms(groups):
-    normalized = []
-    for group in groups:
-        norm_group = {lemmatize(word.lower()) for word in group}
-        normalized.append(list(norm_group))
-    return normalized
-
-SYNONYM_GROUPS = normalize_synonyms(RAW_SYNONYM_GROUPS)
-
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    for lemma in group:
-        SYNONYM_DICT[lemma] = set(group)
+    lemmas = {lemmatize(w.lower()) for w in group}
+    for lemma in lemmas:
+        SYNONYM_DICT[lemma] = lemmas
 
 GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data4.xlsx",
