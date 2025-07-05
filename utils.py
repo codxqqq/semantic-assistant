@@ -41,9 +41,9 @@ for group in SYNONYM_GROUPS:
         SYNONYM_DICT[lemma] = lemmas
 
 GITHUB_CSV_URLS = [
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
+    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data4.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data21.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data31.xlsx"
 ]
 
 def split_by_slash(phrase):
@@ -87,7 +87,6 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
 
-    # ✅ Эмбеддинги кэшируются при первом вызове
     if 'phrase_embs' not in df.attrs:
         df.attrs['phrase_embs'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
@@ -97,7 +96,12 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
         (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
         for idx, score in enumerate(sims) if float(score) >= threshold
     ]
-    return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
+
+    unique = {}
+    for score, phrase, topics in results:
+        if phrase not in unique:
+            unique[phrase] = (score, phrase, topics)
+    return list(unique.values())[:top_k]
 
 def keyword_search(query, df):
     query_proc = preprocess(query)
@@ -108,11 +112,18 @@ def keyword_search(query, df):
     for row in df.itertuples():
         phrase_lemmas = row.phrase_lemmas
         if all(
-            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
+            SYNONYM_DICT.get(ql, {ql}) & phrase_lemmas
             for ql in query_lemmas
         ):
             matched.append((row.phrase_full, row.topics))
-    return matched
+
+    seen = set()
+    unique = []
+    for phrase, topics in matched:
+        if phrase not in seen:
+            seen.add(phrase)
+            unique.append((phrase, topics))
+    return unique
 
 def filter_by_topics(results, selected_topics):
     if not selected_topics:
