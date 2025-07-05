@@ -29,13 +29,9 @@ def lemmatize_cached(word):
     return lemmatize(word)
 
 SYNONYM_GROUPS = [
-    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки", "сим-карты"],
-    ["кредитная карта", "кредитка", "кредиткой", "кредитки", "кредитной карты", "кредитной картой"],
-    ["статус кредитной карты", "статус кредитки"],
-    ["наличные", "наличка", "наличными"],
-    ["дебетовая карта", "дебетовка", "дебетовая"],
-    ["карточка", "карта"],
-    ["потерял", "утеря", "потеря", "утерял"]
+    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
+    ["кредитка", "кредитная карта", "кредитной картой", "картой"],
+    ["наличные", "наличка", "наличными"]
 ]
 
 SYNONYM_DICT = {}
@@ -45,9 +41,9 @@ for group in SYNONYM_GROUPS:
         SYNONYM_DICT[lemma] = lemmas
 
 GITHUB_CSV_URLS = [
-    "https://raw.githubusercontent.com/codxqqq/semantic-assistant/main/data4.xlsx",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data21.xlsx",
-    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data31.xlsx"
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data1.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data2.xlsx",
+    "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data3.xlsx"
 ]
 
 def split_by_slash(phrase):
