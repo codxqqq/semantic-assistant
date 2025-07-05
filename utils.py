@@ -26,9 +26,9 @@ def lemmatize(word):
 def lemmatize_cached(word):
     return lemmatize(word)
 
-# 🔁 Группы синонимов
+# ✅ Синонимы
 SYNONYM_GROUPS = [
-    ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
+    ["сим", "симка", "симкарта", "сим-карта", "симке", "симку", "симки"],
     ["кредитная карта", "кредитка"],
     ["наличные", "наличка", "наличными"],
     ["дебетовая карта", "дебетовка", "дебетовая"],
@@ -37,20 +37,21 @@ SYNONYM_GROUPS = [
     ["украли", "кража", "украден", "украсть"]
 ]
 
-# 🔁 Многословные замены
+# ✅ Построим словарь замены (фраза -> каноническая форма)
 PHRASE_SYNONYMS = {}
 for group in SYNONYM_GROUPS:
     canonical = group[0]
-    for variant in group:
-        PHRASE_SYNONYMS[variant] = canonical
+    for phrase in group:
+        PHRASE_SYNONYMS[phrase] = canonical
 
-# 🔁 Лемматические синонимы
+# ✅ Словарь лемм-синонимов для keyword_search
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
     lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
+# ✅ Заменяем многословные фразы-синонимы
 def replace_phrase_synonyms(text):
     text = text.lower()
     for phrase, canonical in sorted(PHRASE_SYNONYMS.items(), key=lambda x: -len(x[0])):
@@ -64,6 +65,7 @@ GITHUB_CSV_URLS = [
     "https://raw.githubusercontent.com/skatzrsk/semantic-assistant/main/data31.xlsx"
 ]
 
+# ✅ Удалили explode и split_by_slash
 def load_excel(url):
     response = requests.get(url)
     if response.status_code != 200:
@@ -76,11 +78,10 @@ def load_excel(url):
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
 
-    # ❗ Только полные фразы без split
-    df['phrase_full'] = df['phrase'].astype(str).str.strip()
+    df['phrase'] = df['phrase'].astype(str).str.strip()
+    df['phrase_full'] = df['phrase']
     df = df.drop_duplicates(subset='phrase_full')
 
-    df['phrase'] = df['phrase_full']
     df['phrase_proc'] = df['phrase'].apply(replace_phrase_synonyms)
     df['phrase_lemmas'] = df['phrase_proc'].apply(
         lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
