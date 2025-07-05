@@ -1,3 +1,5 @@
+# utils.py
+
 import pandas as pd
 import requests
 import re
@@ -28,15 +30,16 @@ def lemmatize_cached(word):
 
 SYNONYM_GROUPS = [
     ["сим", "симка", "симкарта", "сим-карта", "сим-карте", "симке", "симку", "симки"],
-    ["кредитка", "кредитная карта", "кредитная карточка", "кредитной картой"],
-    ["дебетовка", "дебетовая карта", "дебетовая карточка", "дебетовой картой"],
-    ["карта", "карточка"],
-    ["наличные", "наличка", "наличными"]
+    ["кредитная карта", "кредитка"],
+    ["наличные", "наличка", "наличными"],
+    ["дебетовая карта", "дебетовка", "дебетовая"],
+    ["карточка", "карта"],
+    ["потерял", "утеря", "потеря", "утерял"]
 ]
 
 SYNONYM_DICT = {}
 for group in SYNONYM_GROUPS:
-    lemmas = {lemmatize_cached(w) for phrase in group for w in re.findall(r"\w+", phrase)}
+    lemmas = {lemmatize(w.lower()) for w in group}
     for lemma in lemmas:
         SYNONYM_DICT[lemma] = lemmas
 
@@ -52,21 +55,23 @@ def split_by_slash(phrase):
 
 def load_excel(url):
     response = requests.get(url)
-    response.raise_for_status()
+    if response.status_code != 200:
+        raise ValueError(f"Ошибка загрузки {url}")
     df = pd.read_excel(BytesIO(response.content))
 
-    topic_cols = [c for c in df.columns if c.lower().startswith("topics")]
+    topic_cols = [col for col in df.columns if col.lower().startswith("topics")]
     if not topic_cols:
         raise KeyError("Не найдены колонки topics")
 
     df['topics'] = df[topic_cols].astype(str).agg(lambda x: [v for v in x if v and v != 'nan'], axis=1)
-    df['phrase_full'] = df['phrase'].apply(preprocess)
-
+    df['phrase_full'] = df['phrase']
     df['phrase_list'] = df['phrase'].apply(split_by_slash)
     df = df.explode('phrase_list', ignore_index=True)
     df['phrase'] = df['phrase_list']
     df['phrase_proc'] = df['phrase'].apply(preprocess)
-    df['phrase_lemmas'] = df['phrase_proc'].apply(lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)})
+    df['phrase_lemmas'] = df['phrase_proc'].apply(
+        lambda text: {lemmatize_cached(w) for w in re.findall(r"\w+", text)}
+    )
     return df[['phrase', 'phrase_proc', 'phrase_full', 'phrase_lemmas', 'topics']]
 
 def load_all_excels():
@@ -85,54 +90,45 @@ def semantic_search(query, df, top_k=5, threshold=0.5):
     query_proc = preprocess(query)
     query_emb = model.encode(query_proc, convert_to_tensor=True)
 
+    # ✅ Эмбеддинги кэшируются при первом вызове
     if 'phrase_embs' not in df.attrs:
         df.attrs['phrase_embs'] = model.encode(df['phrase_proc'].tolist(), convert_to_tensor=True)
 
     phrase_embs = df.attrs['phrase_embs']
     sims = util.pytorch_cos_sim(query_emb, phrase_embs)[0]
-
-    seen = set()
-    results = []
-    for idx, score in enumerate(sims):
-        if float(score) >= threshold:
-            phrase_full = df.iloc[idx]['phrase_full']
-            topics = tuple(sorted(df.iloc[idx]['topics']))
-            key = (phrase_full, topics)
-            if key not in seen:
-                results.append((float(score), phrase_full, list(topics)))
-                seen.add(key)
+    results = [
+        (float(score), df.iloc[idx]['phrase_full'], df.iloc[idx]['topics'])
+        for idx, score in enumerate(sims) if float(score) >= threshold
+    ]
     return sorted(results, key=lambda x: x[0], reverse=True)[:top_k]
 
 def keyword_search(query, df):
     query_proc = preprocess(query)
-    query_lemmas = {lemmatize_cached(w) for w in re.findall(r"\w+", query_proc)}
+    query_words = re.findall(r"\w+", query_proc)
+    query_lemmas = [lemmatize_cached(word) for word in query_words]
 
     matched = []
-    seen = set()
     for row in df.itertuples():
-        expanded = set()
-        for pl in row.phrase_lemmas:
-            expanded.update(SYNONYM_DICT.get(pl, {pl}))
-        if query_lemmas.issubset(expanded):
-            key = (row.phrase_full, tuple(sorted(row.topics)))
-            if key not in seen:
-                matched.append((row.phrase_full, row.topics))
-                seen.add(key)
+        phrase_lemmas = row.phrase_lemmas
+        if all(
+            any(ql in SYNONYM_DICT.get(pl, {pl}) for pl in phrase_lemmas)
+            for ql in query_lemmas
+        ):
+            matched.append((row.phrase_full, row.topics))
     return matched
 
 def filter_by_topics(results, selected_topics):
     if not selected_topics:
         return results
+
     filtered = []
-    seen = set()
     for item in results:
-        if len(item) == 3:
+        if isinstance(item, tuple) and len(item) == 3:
             score, phrase, topics = item
-        else:
+            if set(topics) & set(selected_topics):
+                filtered.append((score, phrase, topics))
+        elif isinstance(item, tuple) and len(item) == 2:
             phrase, topics = item
-            score = None
-        key = (phrase, tuple(sorted(topics)))
-        if key not in seen and set(topics) & set(selected_topics):
-            filtered.append(item)
-            seen.add(key)
+            if set(topics) & set(selected_topics):
+                filtered.append((phrase, topics))
     return filtered
